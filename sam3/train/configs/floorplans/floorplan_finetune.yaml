@@ -213,9 +213,9 @@ scratch:
     dict_key: floorplans
     with_seg_masks: ${scratch.enable_segmentation}
 
-  # A100 can handle batch_size 2-4 with masks, use gradient accumulation for larger effective batch
-  gradient_accumulation_steps: 4  # Effective batch size = 4 * 2 = 8
-  train_batch_size: 2             # A100 40GB can handle 2 with masks
+  # With very large images, use simpler settings
+  gradient_accumulation_steps: 1  # Disabled - collate_fn_api doesn't support chunking
+  train_batch_size: 1             # Reduced due to large image sizes
   collate_fn:
     _target_: sam3.train.data.collator.collate_fn_api
     _partial_: true
