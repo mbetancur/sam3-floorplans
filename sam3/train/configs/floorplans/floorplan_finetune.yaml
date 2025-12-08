@@ -14,9 +14,9 @@ defaults:
 # ============================================================================
 paths:
   # Root directory containing train/, val/, test/ subdirectories
-  floorplan_data_root: /content/drive/MyDrive/datasets/floorplans
+  floorplan_data_root: /content/sam3-floorplans/datasets/floorplans
   # Directory where checkpoints, logs, and tensorboard files will be saved
-  experiment_log_dir: /content/drive/MyDrive/sam3_experiments/floorplans
+  experiment_log_dir: /content/sam3-floorplans/sam3_experiments/floorplans
   # BPE vocabulary file (included in sam3 repo)
   bpe_path: assets/bpe_simple_vocab_16e6.txt.gz
 
