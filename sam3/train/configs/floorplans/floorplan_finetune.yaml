@@ -174,7 +174,7 @@ scratch:
   scale_by_find_batch_size: True
 
   # A100 Optimized: Resolution and batch settings
-  resolution: 1024          # Good balance for 1000-2500px floorplans
+  resolution: 1008          # Must match SAM3's expected image size (1008/14=72 feature grid)
   consistent_transform: False
   max_ann_per_img: 100      # Support up to 100 rooms per image
 
