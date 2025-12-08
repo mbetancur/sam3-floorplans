@@ -140,9 +140,9 @@ sam3_logs/
 *.npz
 
 # Logs
-logs/
-runs/
-tensorboard/
+#logs/
+#runs/
+#tensorboard/
 
 # OS specific
 .DS_Store
