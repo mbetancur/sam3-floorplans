@@ -1,0 +1,53 @@
+{
+  "info": {
+    "description": "Hospital Floorplan Room Detection Dataset",
+    "version": "1.0",
+    "year": 2025,
+    "contributor": "Custom Dataset",
+    "date_created": "2025-01-01"
+  },
+  "licenses": [
+    {
+      "id": 1,
+      "name": "Custom License",
+      "url": ""
+    }
+  ],
+  "images": [
+    {
+      "id": 1,
+      "file_name": "example_floorplan.png",
+      "width": 2000,
+      "height": 2000,
+      "license": 1
+    }
+  ],
+  "annotations": [
+    {
+      "id": 1,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [100, 150, 200, 180],
+      "segmentation": [[100, 150, 300, 150, 300, 330, 100, 330]],
+      "area": 36000,
+      "iscrowd": 0
+    },
+    {
+      "id": 2,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [350, 150, 250, 200],
+      "segmentation": [[350, 150, 600, 150, 600, 350, 350, 350]],
+      "area": 50000,
+      "iscrowd": 0
+    }
+  ],
+  "categories": [
+    {
+      "id": 1,
+      "name": "room",
+      "supercategory": "structure"
+    }
+  ]
+}
+

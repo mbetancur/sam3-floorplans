@@ -1,0 +1,413 @@
+# @package _global_
+#
+# SAM3 Fine-tuning Configuration for Hospital Floorplan Room Detection
+# Optimized for Google Colab A100 GPU (40GB/80GB)
+#
+# Usage:
+#   python sam3/train/train.py -c configs/floorplans/floorplan_finetune.yaml --use-cluster 0 --num-gpus 1
+#
+defaults:
+  - _self_
+
+# ============================================================================
+# Paths Configuration (UPDATE THESE FOR YOUR ENVIRONMENT)
+# ============================================================================
+paths:
+  # Root directory containing train/, val/, test/ subdirectories
+  floorplan_data_root: /content/drive/MyDrive/datasets/floorplans
+  # Directory where checkpoints, logs, and tensorboard files will be saved
+  experiment_log_dir: /content/drive/MyDrive/sam3_experiments/floorplans
+  # BPE vocabulary file (included in sam3 repo)
+  bpe_path: assets/bpe_simple_vocab_16e6.txt.gz
+
+# ============================================================================
+# Floorplan Dataset Configuration
+# ============================================================================
+floorplan_train:
+  # Number of training images to use (null = use all)
+  num_images: null
+
+  # Training transforms pipeline
+  train_transforms:
+    - _target_: sam3.train.transforms.basic_for_api.ComposeAPI
+      transforms:
+        # Filter out crowd annotations
+        - _target_: sam3.train.transforms.filter_query_transforms.FlexibleFilterFindGetQueries
+          query_filter:
+            _target_: sam3.train.transforms.filter_query_transforms.FilterCrowds
+        # Add slight noise to bounding boxes for robustness
+        - _target_: sam3.train.transforms.point_sampling.RandomizeInputBbox
+          box_noise_std: 0.05  # Lower noise for precise floorplans
+          box_noise_max: 10
+        # Decode RLE segmentation masks
+        - _target_: sam3.train.transforms.segmentation.DecodeRle
+        # Random resize with scale augmentation
+        - _target_: sam3.train.transforms.basic_for_api.RandomResizeAPI
+          sizes:
+            _target_: sam3.train.transforms.basic.get_random_resize_scales
+            size: ${scratch.resolution}
+            min_size: 640  # Higher minimum for floorplan details
+            rounded: false
+          max_size:
+            _target_: sam3.train.transforms.basic.get_random_resize_max_size
+            size: ${scratch.resolution}
+          square: true
+          consistent_transform: ${scratch.consistent_transform}
+        # Pad to target resolution
+        - _target_: sam3.train.transforms.basic_for_api.PadToSizeAPI
+          size: ${scratch.resolution}
+          consistent_transform: ${scratch.consistent_transform}
+        # Convert to tensor
+        - _target_: sam3.train.transforms.basic_for_api.ToTensorAPI
+        # Filter empty targets
+        - _target_: sam3.train.transforms.filter_query_transforms.FlexibleFilterFindGetQueries
+          query_filter:
+            _target_: sam3.train.transforms.filter_query_transforms.FilterEmptyTargets
+        # Normalize pixel values
+        - _target_: sam3.train.transforms.basic_for_api.NormalizeAPI
+          mean: ${scratch.train_norm_mean}
+          std: ${scratch.train_norm_std}
+        # Filter empty targets again after normalization
+        - _target_: sam3.train.transforms.filter_query_transforms.FlexibleFilterFindGetQueries
+          query_filter:
+            _target_: sam3.train.transforms.filter_query_transforms.FilterEmptyTargets
+    # Filter queries with too many objects
+    - _target_: sam3.train.transforms.filter_query_transforms.FlexibleFilterFindGetQueries
+      query_filter:
+        _target_: sam3.train.transforms.filter_query_transforms.FilterFindQueriesWithTooManyOut
+        max_num_objects: ${scratch.max_ann_per_img}
+
+  # Validation transforms pipeline
+  val_transforms:
+    - _target_: sam3.train.transforms.basic_for_api.ComposeAPI
+      transforms:
+        # Decode RLE for validation masks
+        - _target_: sam3.train.transforms.segmentation.DecodeRle
+        - _target_: sam3.train.transforms.basic_for_api.RandomResizeAPI
+          sizes: ${scratch.resolution}
+          max_size:
+            _target_: sam3.train.transforms.basic.get_random_resize_max_size
+            size: ${scratch.resolution}
+          square: true
+          consistent_transform: False
+        - _target_: sam3.train.transforms.basic_for_api.ToTensorAPI
+        - _target_: sam3.train.transforms.basic_for_api.NormalizeAPI
+          mean: ${scratch.train_norm_mean}
+          std: ${scratch.train_norm_std}
+
+  # Loss configuration WITH MASK LOSS for precise boundary detection
+  loss:
+    _target_: sam3.train.loss.sam3_loss.Sam3LossWrapper
+    matcher: ${scratch.matcher}
+    o2m_weight: 2.0
+    o2m_matcher:
+      _target_: sam3.train.matcher.BinaryOneToManyMatcher
+      alpha: 0.3
+      threshold: 0.4
+      topk: 4
+    use_o2m_matcher_on_o2m_aux: false
+    loss_fns_find:
+      # Bounding box regression losses
+      - _target_: sam3.train.loss.loss_fns.Boxes
+        weight_dict:
+          loss_bbox: 5.0
+          loss_giou: 2.0
+      # Classification loss
+      - _target_: sam3.train.loss.loss_fns.IABCEMdetr
+        weak_loss: False
+        weight_dict:
+          loss_ce: 20.0
+          presence_loss: 20.0
+        pos_weight: 10.0
+        alpha: 0.25
+        gamma: 2
+        use_presence: True
+        pos_focal: false
+        pad_n_queries: 200
+        pad_scale_pos: 1.0
+      # MASK LOSS - Critical for precise room boundaries
+      - _target_: sam3.train.loss.loss_fns.Masks
+        focal_alpha: 0.25
+        focal_gamma: 2.0
+        weight_dict:
+          loss_mask: 200.0   # High weight for accurate masks
+          loss_dice: 30.0    # Increased for better boundary quality
+        compute_aux: false
+    loss_fn_semantic_seg: null
+    scale_by_find_batch_size: ${scratch.scale_by_find_batch_size}
+
+# ============================================================================
+# Model and Training Parameters (A100 Optimized)
+# ============================================================================
+scratch:
+  # CRITICAL: Enable segmentation for mask prediction
+  enable_segmentation: True
+
+  # Model parameters
+  d_model: 256
+  pos_embed:
+    _target_: sam3.model.position_encoding.PositionEmbeddingSine
+    num_pos_feats: ${scratch.d_model}
+    normalize: true
+    scale: null
+    temperature: 10000
+
+  # Box processing
+  use_presence_eval: True
+  original_box_postprocessor:
+    _target_: sam3.eval.postprocessors.PostProcessImage
+    max_dets_per_img: -1
+    use_original_ids: true
+    use_original_sizes_box: true
+    use_presence: ${scratch.use_presence_eval}
+
+  # Matcher configuration
+  matcher:
+    _target_: sam3.train.matcher.BinaryHungarianMatcherV2
+    focal: true
+    cost_class: 2.0
+    cost_bbox: 5.0
+    cost_giou: 2.0
+    alpha: 0.25
+    gamma: 2
+    stable: False
+  scale_by_find_batch_size: True
+
+  # A100 Optimized: Resolution and batch settings
+  resolution: 1024          # Good balance for 1000-2500px floorplans
+  consistent_transform: False
+  max_ann_per_img: 100      # Support up to 100 rooms per image
+
+  # Normalization for B&W images (can use same values)
+  train_norm_mean: [0.5, 0.5, 0.5]
+  train_norm_std: [0.5, 0.5, 0.5]
+  val_norm_mean: [0.5, 0.5, 0.5]
+  val_norm_std: [0.5, 0.5, 0.5]
+
+  # A100 Optimized: Workers and data loading
+  num_train_workers: 4      # Colab has limited CPU cores
+  num_val_workers: 2
+  max_data_epochs: 50       # More epochs for small dataset
+  target_epoch_size: 500    # Smaller epoch size for frequent validation
+  hybrid_repeats: 1
+  context_length: 2
+  gather_pred_via_filesys: false
+
+  # Fine-tuning learning rates (lower than training from scratch)
+  lr_scale: 0.05                                        # Reduced for fine-tuning
+  lr_transformer: ${times:8e-4,${scratch.lr_scale}}     # 4e-5
+  lr_vision_backbone: ${times:2.5e-4,${scratch.lr_scale}}  # 1.25e-5
+  lr_language_backbone: ${times:5e-5,${scratch.lr_scale}}  # 2.5e-6
+  lrd_vision_backbone: 0.9
+  wd: 0.1
+  scheduler_timescale: 30   # Longer warmup for fine-tuning
+  scheduler_warmup: 30
+  scheduler_cooldown: 30
+
+  # A100 Optimized: Batch sizes
+  val_batch_size: 1
+  collate_fn_val:
+    _target_: sam3.train.data.collator.collate_fn_api
+    _partial_: true
+    repeats: ${scratch.hybrid_repeats}
+    dict_key: floorplans
+    with_seg_masks: ${scratch.enable_segmentation}
+
+  # A100 can handle batch_size 2-4 with masks, use gradient accumulation for larger effective batch
+  gradient_accumulation_steps: 4  # Effective batch size = 4 * 2 = 8
+  train_batch_size: 2             # A100 40GB can handle 2 with masks
+  collate_fn:
+    _target_: sam3.train.data.collator.collate_fn_api
+    _partial_: true
+    repeats: ${scratch.hybrid_repeats}
+    dict_key: all
+    with_seg_masks: ${scratch.enable_segmentation}
+
+# ============================================================================
+# Trainer Configuration
+# ============================================================================
+trainer:
+  _target_: sam3.train.trainer.Trainer
+  skip_saving_ckpts: false     # Save checkpoints!
+  empty_gpu_mem_cache_after_eval: True
+  skip_first_val: False        # Validate before training to establish baseline
+  max_epochs: 50               # More epochs for small dataset
+  accelerator: cuda
+  seed_value: 42
+  val_epoch_freq: 5            # Validate every 5 epochs
+  mode: train
+  gradient_accumulation_steps: ${scratch.gradient_accumulation_steps}
+
+  distributed:
+    backend: nccl
+    find_unused_parameters: True
+    gradient_as_bucket_view: True
+
+  loss:
+    all: ${floorplan_train.loss}
+    default:
+      _target_: sam3.train.loss.sam3_loss.DummyLoss
+
+  data:
+    train:
+      _target_: sam3.train.data.torch_dataset.TorchDataset
+      dataset:
+        _target_: sam3.train.data.sam3_image_dataset.Sam3ImageDataset
+        limit_ids: ${floorplan_train.num_images}
+        transforms: ${floorplan_train.train_transforms}
+        load_segmentation: ${scratch.enable_segmentation}
+        max_ann_per_img: 500000
+        multiplier: 1
+        max_train_queries: 50000
+        max_val_queries: 50000
+        training: true
+        use_caching: False
+        img_folder: ${paths.floorplan_data_root}/train/
+        ann_file: ${paths.floorplan_data_root}/train/_annotations.coco.json
+
+      shuffle: True
+      batch_size: ${scratch.train_batch_size}
+      num_workers: ${scratch.num_train_workers}
+      pin_memory: True
+      drop_last: True
+      collate_fn: ${scratch.collate_fn}
+
+    val:
+      _target_: sam3.train.data.torch_dataset.TorchDataset
+      dataset:
+        _target_: sam3.train.data.sam3_image_dataset.Sam3ImageDataset
+        load_segmentation: ${scratch.enable_segmentation}
+        coco_json_loader:
+          _target_: sam3.train.data.coco_json_loaders.COCO_FROM_JSON
+          include_negatives: true
+          category_chunk_size: 1
+          _partial_: true
+        img_folder: ${paths.floorplan_data_root}/val/
+        ann_file: ${paths.floorplan_data_root}/val/_annotations.coco.json
+        transforms: ${floorplan_train.val_transforms}
+        max_ann_per_img: 100000
+        multiplier: 1
+        training: false
+
+      shuffle: False
+      batch_size: ${scratch.val_batch_size}
+      num_workers: ${scratch.num_val_workers}
+      pin_memory: True
+      drop_last: False
+      collate_fn: ${scratch.collate_fn_val}
+
+  model:
+    _target_: sam3.model_builder.build_sam3_image_model
+    bpe_path: ${paths.bpe_path}
+    device: cuda
+    eval_mode: false
+    enable_segmentation: ${scratch.enable_segmentation}
+
+  meters:
+    val:
+      floorplans:
+        detection:
+          _target_: sam3.eval.coco_writer.PredictionDumper
+          iou_type: "segm"  # Evaluate segmentation masks
+          dump_dir: ${launcher.experiment_log_dir}/dumps/floorplans
+          merge_predictions: True
+          postprocessor: ${scratch.original_box_postprocessor}
+          gather_pred_via_filesys: ${scratch.gather_pred_via_filesys}
+          maxdets: 100
+          pred_file_evaluators:
+            - _target_: sam3.eval.coco_eval_offline.CocoEvaluatorOfflineWithPredFileEvaluators
+              gt_path: ${paths.floorplan_data_root}/val/_annotations.coco.json
+              tide: False
+              iou_type: "segm"
+
+  optim:
+    amp:
+      enabled: True
+      amp_dtype: bfloat16  # A100 bfloat16 is optimal
+
+    optimizer:
+      _target_: torch.optim.AdamW
+
+    gradient_clip:
+      _target_: sam3.train.optim.optimizer.GradientClipper
+      max_norm: 0.1
+      norm_type: 2
+
+    param_group_modifiers:
+      - _target_: sam3.train.optim.optimizer.layer_decay_param_modifier
+        _partial_: True
+        layer_decay_value: ${scratch.lrd_vision_backbone}
+        apply_to: 'backbone.vision_backbone.trunk'
+        overrides:
+          - pattern: '*pos_embed*'
+            value: 1.0
+
+    options:
+      lr:
+        - scheduler:
+            _target_: sam3.train.optim.schedulers.InverseSquareRootParamScheduler
+            base_lr: ${scratch.lr_transformer}
+            timescale: ${scratch.scheduler_timescale}
+            warmup_steps: ${scratch.scheduler_warmup}
+            cooldown_steps: ${scratch.scheduler_cooldown}
+        - scheduler:
+            _target_: sam3.train.optim.schedulers.InverseSquareRootParamScheduler
+            base_lr: ${scratch.lr_vision_backbone}
+            timescale: ${scratch.scheduler_timescale}
+            warmup_steps: ${scratch.scheduler_warmup}
+            cooldown_steps: ${scratch.scheduler_cooldown}
+          param_names:
+            - 'backbone.vision_backbone.*'
+        - scheduler:
+            _target_: sam3.train.optim.schedulers.InverseSquareRootParamScheduler
+            base_lr: ${scratch.lr_language_backbone}
+            timescale: ${scratch.scheduler_timescale}
+            warmup_steps: ${scratch.scheduler_warmup}
+            cooldown_steps: ${scratch.scheduler_cooldown}
+          param_names:
+            - 'backbone.language_backbone.*'
+
+      weight_decay:
+        - scheduler:
+            _target_: fvcore.common.param_scheduler.ConstantParamScheduler
+            value: ${scratch.wd}
+        - scheduler:
+            _target_: fvcore.common.param_scheduler.ConstantParamScheduler
+            value: 0.0
+          param_names:
+            - '*bias*'
+          module_cls_names: ['torch.nn.LayerNorm']
+
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}/checkpoints
+    save_freq: 10  # Save every 10 epochs
+
+  logging:
+    tensorboard_writer:
+      _target_: sam3.train.utils.logger.make_tensorboard_logger
+      log_dir: ${launcher.experiment_log_dir}/tensorboard
+      flush_secs: 120
+      should_log: True
+    wandb_writer: null
+    log_dir: ${launcher.experiment_log_dir}/logs
+    log_freq: 10
+
+# ============================================================================
+# Launcher Configuration (Single GPU for Colab)
+# ============================================================================
+launcher:
+  num_nodes: 1
+  gpus_per_node: 1
+  experiment_log_dir: ${paths.experiment_log_dir}
+  multiprocessing_context: spawn  # Use spawn for Colab compatibility
+
+submitit:
+  account: null
+  partition: null
+  qos: null
+  timeout_hour: 72
+  use_cluster: False  # Local execution for Colab
+  cpus_per_task: 4
+  port_range: [10000, 65000]
+  constraint: null
+

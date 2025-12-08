@@ -1,0 +1,26 @@
+{
+  "info": {
+    "description": "Hospital Floorplan Room Detection Dataset - Validation",
+    "version": "1.0",
+    "year": 2025,
+    "contributor": "Custom Dataset",
+    "date_created": "2025-01-01"
+  },
+  "licenses": [
+    {
+      "id": 1,
+      "name": "Custom License",
+      "url": ""
+    }
+  ],
+  "images": [],
+  "annotations": [],
+  "categories": [
+    {
+      "id": 1,
+      "name": "room",
+      "supercategory": "structure"
+    }
+  ]
+}
+
