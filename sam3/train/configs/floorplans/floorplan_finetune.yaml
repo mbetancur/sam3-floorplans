@@ -18,8 +18,8 @@ paths:
   # Directory where checkpoints, logs, and tensorboard files will be saved
   experiment_log_dir: /content/sam3-floorplans/sam3_experiments/floorplans
   # BPE vocabulary file (included in sam3 repo)
-  bpe_path: assets/bpe_simple_vocab_16e6.txt.gz
-
+  bpe_path: /content/sam3-floorplans/assets/bpe_simple_vocab_16e6.txt.gz  
+  
 # ============================================================================
 # Floorplan Dataset Configuration
 # ============================================================================
