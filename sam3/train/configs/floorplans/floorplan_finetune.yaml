@@ -176,7 +176,7 @@ scratch:
   # A100 Optimized: Resolution and batch settings
   resolution: 1008          # Must match SAM3's expected image size (1008/14=72 feature grid)
   consistent_transform: False
-  max_ann_per_img: 100      # Support up to 100 rooms per image
+  max_ann_per_img: 300      # Support up to 100 rooms per image
 
   # Normalization for B&W images (can use same values)
   train_norm_mean: [0.5, 0.5, 0.5]
@@ -194,7 +194,7 @@ scratch:
   gather_pred_via_filesys: false
 
   # Fine-tuning learning rates (lower than training from scratch)
-  lr_scale: 0.05                                        # Reduced for fine-tuning
+  lr_scale: 0.08                                        # Reduced for fine-tuning
   lr_transformer: ${times:8e-4,${scratch.lr_scale}}     # 4e-5
   lr_vision_backbone: ${times:2.5e-4,${scratch.lr_scale}}  # 1.25e-5
   lr_language_backbone: ${times:5e-5,${scratch.lr_scale}}  # 2.5e-6
@@ -215,7 +215,7 @@ scratch:
 
   # With very large images, use simpler settings
   gradient_accumulation_steps: 1  # Disabled - collate_fn_api doesn't support chunking
-  train_batch_size: 1             # Reduced due to large image sizes
+  train_batch_size: 2             # Reduced due to large image sizes
   collate_fn:
     _target_: sam3.train.data.collator.collate_fn_api
     _partial_: true
@@ -231,7 +231,7 @@ trainer:
   skip_saving_ckpts: false     # Save checkpoints!
   empty_gpu_mem_cache_after_eval: True
   skip_first_val: False        # Validate before training to establish baseline
-  max_epochs: 50               # More epochs for small dataset
+  max_epochs: 100               # More epochs for small dataset
   accelerator: cuda
   seed_value: 42
   val_epoch_freq: 5            # Validate every 5 epochs
