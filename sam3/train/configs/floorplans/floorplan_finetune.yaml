@@ -309,7 +309,7 @@ trainer:
       floorplans:
         detection:
           _target_: sam3.eval.coco_writer.PredictionDumper
-          iou_type: "segm"  # Evaluate segmentation masks
+          iou_type: "bbox"  # Use bbox for validation (mask output requires additional config)
           dump_dir: ${launcher.experiment_log_dir}/dumps/floorplans
           merge_predictions: True
           postprocessor: ${scratch.original_box_postprocessor}
@@ -319,7 +319,7 @@ trainer:
             - _target_: sam3.eval.coco_eval_offline.CocoEvaluatorOfflineWithPredFileEvaluators
               gt_path: ${paths.floorplan_data_root}/val/_annotations.coco.json
               tide: False
-              iou_type: "segm"
+              iou_type: "bbox"
 
   optim:
     amp:
