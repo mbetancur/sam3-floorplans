@@ -240,7 +240,8 @@ trainer:
 
   distributed:
     backend: nccl
-    find_unused_parameters: True
+    find_unused_parameters: False  # ← Fixed!
+    static_graph: True             # ← Add this too (optional, helps performance)
     gradient_as_bucket_view: True
 
   loss:
