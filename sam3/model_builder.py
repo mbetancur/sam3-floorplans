@@ -545,6 +545,65 @@ def _load_checkpoint(model, checkpoint_path):
         )
 
 
+def load_finetuned_checkpoint_with_tracker(
+    model,
+    finetuned_checkpoint_path: str,
+    original_checkpoint_path: Optional[str] = None,
+    load_original_from_hf: bool = True,
+):
+    """
+    Load a fine-tuned checkpoint while preserving tracker weights from the original checkpoint.
+    
+    This is useful when loading a fine-tuned model that was trained without the interactive
+    predictor, but you want to use it for interactive prediction (predict_inst).
+    
+    Args:
+        model: The SAM3 model (must have inst_interactive_predictor enabled)
+        finetuned_checkpoint_path: Path to the fine-tuned checkpoint
+        original_checkpoint_path: Optional path to original SAM3 checkpoint. If None and
+            load_original_from_hf is True, will download from HuggingFace.
+        load_original_from_hf: Whether to download original checkpoint from HuggingFace
+            if original_checkpoint_path is None
+    
+    Returns:
+        The model with weights loaded
+    """
+    if model.inst_interactive_predictor is None:
+        raise ValueError(
+            "Model must have inst_interactive_predictor enabled. "
+            "Build model with enable_inst_interactivity=True"
+        )
+    
+    # First, load original checkpoint to get tracker weights
+    if original_checkpoint_path is None and load_original_from_hf:
+        original_checkpoint_path = download_ckpt_from_hf()
+    
+    if original_checkpoint_path is not None:
+        print(f"Loading tracker weights from original checkpoint: {original_checkpoint_path}")
+        with g_pathmgr.open(original_checkpoint_path, "rb") as f:
+            original_ckpt = torch.load(f, map_location="cpu", weights_only=True)
+        if "model" in original_ckpt and isinstance(original_ckpt["model"], dict):
+            original_ckpt = original_ckpt["model"]
+        
+        # Load only tracker weights from original checkpoint
+        tracker_ckpt = {
+            k.replace("tracker.", "inst_interactive_predictor.model."): v
+            for k, v in original_ckpt.items()
+            if "tracker" in k
+        }
+        if tracker_ckpt:
+            missing_keys, _ = model.load_state_dict(tracker_ckpt, strict=False)
+            print(f"Loaded tracker weights. Missing keys: {len(missing_keys)}")
+        else:
+            print("Warning: No tracker weights found in original checkpoint")
+    
+    # Then, load fine-tuned checkpoint to update detector weights
+    print(f"Loading fine-tuned detector weights from: {finetuned_checkpoint_path}")
+    _load_checkpoint(model, finetuned_checkpoint_path)
+    
+    return model
+
+
 def _setup_device_and_mode(model, device, eval_mode):
     """Setup model device and evaluation mode."""
     if device == "cuda":
@@ -563,6 +622,8 @@ def build_sam3_image_model(
     enable_segmentation=True,
     enable_inst_interactivity=False,
     compile=False,
+    original_checkpoint_path=None,
+    load_original_from_hf=False,
 ):
     """
     Build SAM3 image model
@@ -571,10 +632,15 @@ def build_sam3_image_model(
         bpe_path: Path to the BPE tokenizer vocabulary
         device: Device to load the model on ('cuda' or 'cpu')
         eval_mode: Whether to set the model to evaluation mode
-        checkpoint_path: Optional path to model checkpoint
+        checkpoint_path: Optional path to model checkpoint (fine-tuned checkpoint)
+        load_from_HF: Whether to download checkpoint from HuggingFace if checkpoint_path is None
         enable_segmentation: Whether to enable segmentation head
         enable_inst_interactivity: Whether to enable instance interactivity (SAM 1 task)
-        compile_mode: To enable compilation, set to "default"
+        compile: To enable compilation, set to True
+        original_checkpoint_path: Optional path to original SAM3 checkpoint for tracker weights.
+            Only used if enable_inst_interactivity=True and checkpoint_path is a fine-tuned checkpoint.
+        load_original_from_hf: Whether to download original checkpoint from HuggingFace
+            if original_checkpoint_path is None and enable_inst_interactivity=True
 
     Returns:
         A SAM3 image model
@@ -627,9 +693,20 @@ def build_sam3_image_model(
     )
     if load_from_HF and checkpoint_path is None:
         checkpoint_path = download_ckpt_from_hf()
+    
     # Load checkpoint if provided
     if checkpoint_path is not None:
-        _load_checkpoint(model, checkpoint_path)
+        # If inst_interactivity is enabled and we have a fine-tuned checkpoint,
+        # we may need to load tracker weights from original checkpoint
+        if enable_inst_interactivity and (original_checkpoint_path is not None or load_original_from_hf):
+            load_finetuned_checkpoint_with_tracker(
+                model,
+                finetuned_checkpoint_path=checkpoint_path,
+                original_checkpoint_path=original_checkpoint_path,
+                load_original_from_hf=load_original_from_hf,
+            )
+        else:
+            _load_checkpoint(model, checkpoint_path)
 
     # Setup device and mode
     model = _setup_device_and_mode(model, device, eval_mode)
